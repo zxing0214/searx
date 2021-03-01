@@ -38,7 +38,7 @@ ui:
     static_path : "" # Custom static path - leave it blank if you didn't change
     templates_path : "" # Custom templates path - leave it blank if you didn't change
     default_theme : oscar # ui theme
-    default_locale : "" # Default interface locale - leave blank to detect from browser information or use codes from the 'locales' config section
+    default_locale : "zh_CN" # Default interface locale - leave blank to detect from browser information or use codes from the 'locales' config section
     theme_args :
         oscar_style : logicodev # default style of oscar
     results_on_new_tab: True  # Open result links in a new tab by default
