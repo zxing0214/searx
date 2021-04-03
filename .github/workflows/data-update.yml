@@ -1,13 +1,23 @@
 name: "Update searx.data"
 on:
   schedule:
-    - cron: "05 16 * * 5"
+    - cron: "05 06 1 * *"
+  workflow_dispatch:
 
 jobs:
   updateData:
-    name: Update data
+    name: Update data - ${{ matrix.fetch }}
     runs-on: ubuntu-20.04
     if: ${{ github.repository_owner == 'searx'}}
+    strategy:
+      matrix:
+        fetch:
+          - update_ahmia_blacklist.py
+          - update_currencies.py
+          - update_external_bangs.py
+          - update_firefox_version.py
+          - update_languages.py
+          - update_wikidata_units.py
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -22,44 +32,34 @@ jobs:
           python-version: '3.9'
           architecture: 'x64'
 
-      - name: Cache Python dependencies
-        id: cache-python
-        uses: actions/cache@v2
-        with:
-          path: ./local
-          key: python-${{ matrix.os }}-3.9-${{ hashFiles('requirements*.txt', 'setup.py') }}
-    
       - name: Install Python dependencies
-        if: steps.cache-python.outputs.cache-hit != 'true'
         run: |
           make V=1 install
 
       - name: Fetch data
+        env:
+          FETCH_SCRIPT: ./searx_extra/update/${{ matrix.fetch }}
         run: |
           source local/py3/bin/activate
-          python utils/fetch_firefox_version.py
-          python utils/fetch_languages.py
-          python utils/fetch_ahmia_blacklist.py
-          python utils/fetch_wikidata_units.py
-          python utils/fetch_currencies.py
+          $FETCH_SCRIPT
 
       - name: Create Pull Request
         id: cpr
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.DATA_PR_TOKEN }}
-          commit-message: Update searx.data
+          commit-message: Update searx.data - ${{ matrix.fetch }}
           committer: searx-bot <noreply@github.com>
           author: ${{ github.actor }} <${{ github.actor }}@users.noreply.github.com>
           signoff: false
-          branch: automatic-update-data
+          branch: update_data_${{ matrix.fetch }}
           delete-branch: true
-          title: 'Update searx.data'
+          draft: false
+          title: 'Update searx.data - ${{ matrix.fetch }}'
           body: |
-            Update searx.data
+            Update searx.data - ${{ matrix.fetch }}
           labels: |
             data
-          draft: false
 
       - name: Check outputs
         run: |

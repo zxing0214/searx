@@ -76,7 +76,7 @@ def response(resp):
     if api_result.get('type') != 'standard':
         return []
 
-    title = api_result['displaytitle']
+    title = api_result['title']
     wikipedia_link = api_result['content_urls']['desktop']['page']
 
     results.append({'url': wikipedia_link, 'title': title})
@@ -106,6 +106,6 @@ def _fetch_supported_languages(resp):
             articles = int(td[4].xpath('./a/b')[0].text.replace(',', ''))
             # exclude languages with too few articles
             if articles >= 100:
-                supported_languages[code] = {"name": name, "english_name": english_name, "articles": articles}
+                supported_languages[code] = {"name": name, "english_name": english_name}
 
     return supported_languages

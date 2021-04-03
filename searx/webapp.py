@@ -74,12 +74,13 @@ from searx.languages import language_codes as languages
 from searx.search import SearchWithPlugins, initialize as search_initialize
 from searx.search.checker import get_result as checker_get_result
 from searx.query import RawTextQuery
-from searx.autocomplete import searx_bang, backends as autocomplete_backends
+from searx.autocomplete import search_autocomplete, backends as autocomplete_backends
 from searx.plugins import plugins
 from searx.plugins.oa_doi_rewrite import get_doi_resolver
 from searx.preferences import Preferences, ValidationException, LANGUAGE_CODES
 from searx.answerers import answerers
 from searx.poolrequests import get_global_proxies
+from searx.answerers import ask
 from searx.metrology.error_recorder import errors_per_engines
 
 # serve pages with HTTP/1.1
@@ -241,7 +242,8 @@ def code_highlighter(codelines, language=None):
 
             # highlight last codepart
             formatter = HtmlFormatter(linenos='inline',
-                                      linenostart=line_code_start)
+                                      linenostart=line_code_start,
+                                      cssclass="code-highlight")
             html_code = html_code + highlight(tmp_code, lexer, formatter)
 
             # reset conditions for next codepart
@@ -255,7 +257,7 @@ def code_highlighter(codelines, language=None):
         last_line = line
 
     # highlight last codepart
-    formatter = HtmlFormatter(linenos='inline', linenostart=line_code_start)
+    formatter = HtmlFormatter(linenos='inline', linenostart=line_code_start, cssclass="code-highlight")
     html_code = html_code + highlight(tmp_code, lexer, formatter)
 
     return html_code
@@ -360,6 +362,15 @@ def image_proxify(url):
                             urlencode(dict(url=url.encode(), h=h)))
 
 
+def get_translations():
+    return {
+        # when overpass AJAX request fails (on a map result)
+        'could_not_load': gettext('could not load data'),
+        # when there is autocompletion
+        'no_item_found': gettext('No item found')
+    }
+
+
 def render(template_name, override_theme=None, **kwargs):
     disabled_engines = request.preferences.engines.get_disabled()
 
@@ -418,6 +429,8 @@ def render(template_name, override_theme=None, **kwargs):
     kwargs['preferences'] = request.preferences
 
     kwargs['brand'] = brand
+
+    kwargs['translations'] = json.dumps(get_translations(), separators=(',', ':'))
 
     kwargs['scripts'] = set()
     kwargs['endpoint'] = 'results' if 'q' in kwargs else request.endpoint
@@ -729,6 +742,7 @@ def search():
         answers=result_container.answers,
         corrections=correction_urls,
         infoboxes=result_container.infoboxes,
+        engine_data=result_container.engine_data,
         paging=result_container.paging,
         unresponsive_engines=__get_translated_errors(result_container.unresponsive_engines),
         current_language=match_language(search_query.lang,
@@ -763,27 +777,18 @@ def about():
 def autocompleter():
     """Return autocompleter results"""
 
+    # run autocompleter
+    results = []
+
     # set blocked engines
     disabled_engines = request.preferences.engines.get_disabled()
 
     # parse query
     raw_text_query = RawTextQuery(request.form.get('q', ''), disabled_engines)
 
-    # check if search query is set
-    if not raw_text_query.getQuery():
-        return '', 400
-
-    # run autocompleter
-    completer = autocomplete_backends.get(request.preferences.get_value('autocomplete'))
-
-    # parse searx specific autocompleter results like !bang
-    raw_results = searx_bang(raw_text_query)
-
     # normal autocompletion results only appear if no inner results returned
-    # and there is a query part besides the engine and language bangs
-    if len(raw_results) == 0 and completer and (len(raw_text_query.query_parts) > 1 or
-                                                (len(raw_text_query.languages) == 0 and
-                                                 not raw_text_query.specific)):
+    # and there is a query part
+    if len(raw_text_query.autocomplete_list) == 0 and len(raw_text_query.getQuery()) > 0:
         # get language from cookie
         language = request.preferences.get_value('language')
         if not language or language == 'all':
@@ -791,15 +796,18 @@ def autocompleter():
         else:
             language = language.split('-')[0]
         # run autocompletion
-        raw_results.extend(completer(raw_text_query.getQuery(), language))
+        raw_results = search_autocomplete(request.preferences.get_value('autocomplete'),
+                                          raw_text_query.getQuery(), language)
+        for result in raw_results:
+            results.append(raw_text_query.changeQuery(result).getFullQuery())
 
-    # parse results (write :language and !engine back to result string)
-    results = []
-    for result in raw_results:
-        raw_text_query.changeQuery(result)
+    if len(raw_text_query.autocomplete_list) > 0:
+        for autocomplete_text in raw_text_query.autocomplete_list:
+            results.append(raw_text_query.get_autocomplete_full_query(autocomplete_text))
 
-        # add parsed result
-        results.append(raw_text_query.getFullQuery())
+    for answers in ask(raw_text_query):
+        for answer in answers:
+            results.append(str(answer['answer']))
 
     # return autocompleter results
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
@@ -845,7 +853,6 @@ def preferences():
             if e.timeout > settings['outgoing']['request_timeout']:
                 stats[e.name]['warn_timeout'] = True
             stats[e.name]['supports_selected_language'] = _is_selected_language_supported(e, request.preferences)
-
             engines_by_category[c].append(e)
 
     # get first element [0], the engine time,
@@ -1085,14 +1092,6 @@ def config():
         'doi_resolvers': [r for r in settings['doi_resolvers']],
         'default_doi_resolver': settings['default_doi_resolver'],
     })
-
-
-@app.route('/translations.js')
-def js_translations():
-    return render(
-        'translations.js.tpl',
-        override_theme='__common__',
-    ), {'Content-Type': 'text/javascript; charset=UTF-8'}
 
 
 @app.errorhandler(404)
